@@ -7,10 +7,8 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  createAssistantMessageEventStream,
-  openAICompletionsApi,
-} from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
 // ---------------------------------------------------------------------------
 // Model helpers
