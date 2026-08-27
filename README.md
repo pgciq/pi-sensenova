@@ -64,4 +64,8 @@ pi --model sensenova/sensenova-u1.5-lite "一只戴帽子的猫"
 
 ## Development
 
-The extension imports `createAssistantMessageEventStream` and `openAICompletionsApi` from the bare `@earendil-works/pi-ai` specifier. This is required: pi's extension loader only resolves the bare package specifier at runtime, not its `api/*` subpaths.
+The extension depends on `@earendil-works/pi-ai` (a peer dependency provided by pi at runtime). `createAssistantMessageEventStream` is imported from the bare package, and `openAICompletionsApi` is resolved defensively: newer pi-ai builds expose it only via the `@earendil-works/pi-ai/api/openai-completions.lazy` subpath, while older builds export it from the bare package. The fallback import keeps the extension loading on both layouts. Validate with:
+
+```bash
+node --test
+```

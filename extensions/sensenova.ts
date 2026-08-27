@@ -7,7 +7,18 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+
+// `openAICompletionsApi` lives on the bare `@earendil-works/pi-ai` export in
+// older pi-ai builds but moved to the `@earendil-works/pi-ai/api/openai-completions.lazy`
+// subpath in newer ones. Resolve it defensively so the extension loads on both.
+const openAICompletionsApi = await (async () => {
+  try {
+    return (await import("@earendil-works/pi-ai/api/openai-completions.lazy")).openAICompletionsApi;
+  } catch {
+    return (await import("@earendil-works/pi-ai")).openAICompletionsApi;
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Model helpers
