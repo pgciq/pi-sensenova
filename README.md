@@ -50,6 +50,14 @@ export SENSENOVA_API_KEY="your-api-key"
 
 Models discovered via `/v1/models` are added automatically.
 
+## Model discovery (non-blocking)
+
+`pi-sensenova` registers a **seed** model catalog synchronously at load (so pi starts instantly) and refreshes it from `/v1/models` **in the background** via pi's `refreshModels` callback — it never blocks startup on the network.
+
+- The seed list is always available immediately, even offline or without `SENSENOVA_API_KEY`.
+- A successful background refresh replaces the seed list and is persisted to pi's provider cache, so discovered models survive restarts and offline starts.
+- Every network call is bounded by a timeout and degrades to the seed list on any failure.
+
 ## Usage
 
 ```bash
