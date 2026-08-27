@@ -1,6 +1,6 @@
 # pi-sensenova
 
-Pi extension for [SenseNova](https://platform.sensenova.cn/docs), with dynamic model discovery.
+Pi extension for [SenseNova](https://platform.sensenova.cn/docs), an OpenAI-compatible provider. It registers the `sensenova` provider with a seed model catalog, then refreshes the catalog from `/v1/models` in the background and persists it for offline starts.
 
 ## Install
 
@@ -14,6 +14,12 @@ Or install from git:
 pi install git:github.com/pgciq/pi-sensenova
 ```
 
+To try it for a single run without persisting:
+
+```bash
+pi -e .
+```
+
 ## Configuration
 
 Set the API key before starting pi:
@@ -22,10 +28,40 @@ Set the API key before starting pi:
 export SENSENOVA_API_KEY="your-api-key"
 ```
 
-The provider uses `https://token.sensenova.cn/v1` and registers as `sensenova`. It starts with a seed model catalog and refreshes it from `/v1/models` in the background. A successful catalog refresh is persisted for offline starts.
+- **Base URL:** `https://token.sensenova.cn/v1`
+- **Provider id:** `sensenova`
+- **Auth:** `SENSENOVA_API_KEY` env var (the key is kept as an env reference, so pi marks the provider unconfigured rather than sending a placeholder when the variable is absent)
+
+## Features
+
+- **OpenAI-compatible streaming** — text models stream through pi-ai's `openai-completions` API.
+- **Reasoning / thinking models** — `deepseek-v4-flash`, `deepseek-v4-pro`, and `glm-5.2` expose a thinking-effort level map (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+- **Image generation** — models matching `sensenova-u1`, `sensenova-u1.5`, `sensenova-u1-fast`, `sensenova-u1.5-fast` (and `sensenova-u1.5-lite`) route to the `/v1/images/generations` endpoint. Generated images are saved under `.pi/generated-images/`.
+- **Image editing** — `sensenova-u1.5-lite` routes to `/v1/images/edits` when the prompt includes reference images.
+- **Dynamic model discovery** — a seed list is available immediately; the full list is fetched from `/v1/models` and cached. Discovered models survive restarts and offline starts.
+
+## Seed models
+
+| Model id              | Notes                          |
+| --------------------- | ------------------------------ |
+| `sensenova-6.7-flash-lite` | Reasoning-capable text model |
+| `deepseek-v4-flash`   | Reasoning-capable text model   |
+| `glm-5.2`             | Reasoning-capable text model   |
+
+Models discovered via `/v1/models` are added automatically.
 
 ## Usage
 
 ```bash
 pi --model sensenova/deepseek-v4-flash "你好"
 ```
+
+Generate an image (text prompt) with an image model:
+
+```bash
+pi --model sensenova/sensenova-u1.5-lite "一只戴帽子的猫"
+```
+
+## Development
+
+The extension imports `createAssistantMessageEventStream` and `openAICompletionsApi` from the bare `@earendil-works/pi-ai` specifier. This is required: pi's extension loader only resolves the bare package specifier at runtime, not its `api/*` subpaths.
