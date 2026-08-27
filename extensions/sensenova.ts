@@ -5,6 +5,13 @@
 // from /v1/models in the background.  Discovered models are persisted to disk
 // and re-used on subsequent starts when the API is unreachable.
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  createAssistantMessageEventStream,
+  openAICompletionsApi,
+} from "@earendil-works/pi-ai";
+
 // ---------------------------------------------------------------------------
 // Model helpers
 // ---------------------------------------------------------------------------
@@ -23,6 +30,7 @@ const TEXT_ONLY_IDS = new Set([
   "deepseek-v4-pro",
   "glm-5.2",
 ]);
+const IMAGE_EDIT_IDS = new Set(["sensenova-u1.5-lite"]);
 
 function detectLimits(id) {
   if (id.startsWith("sensenova-6")) return { contextWindow: 262144, maxTokens: 65536 };
@@ -41,13 +49,27 @@ function isReasoningModel(id) {
 
 function convertModel(model) {
   const id = typeof model?.id === "string" ? model.id : String(model?.id ?? "");
+  const outputModalities = Array.isArray(model?.output_modalities)
+    ? model.output_modalities
+    : /^(sensenova-u1(?:\.5)?(?:-fast|-lite)?)$/.test(id)
+      ? ["image"]
+      : ["text"];
+  const inputModalities = IMAGE_EDIT_IDS.has(id)
+    ? ["text", "image"]
+    : Array.isArray(model?.input_modalities)
+      ? model.input_modalities
+      : TEXT_ONLY_IDS.has(id)
+        ? ["text"]
+        : ["text", "image"];
   const entry = {
     id,
     name: id,
     reasoning: false,
-    input: TEXT_ONLY_IDS.has(id) ? ["text"] : ["text", "image"],
+    input: inputModalities.includes("image") ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     ...detectLimits(id),
+    // Private metadata consumed by streamSenseNova. Pi ignores unknown fields.
+    sensenovaOutputModalities: outputModalities,
   };
 
   if (isReasoningModel(id)) {
@@ -90,6 +112,140 @@ async function fetchModels(baseUrl, signal) {
 }
 
 // ---------------------------------------------------------------------------
+// Dedicated image generation API
+// ---------------------------------------------------------------------------
+
+function latestUserContent(context) {
+  const messages = Array.isArray(context?.messages) ? context.messages : [];
+  return [...messages].reverse().find((message) => message?.role === "user");
+}
+
+function latestTextPrompt(context) {
+  const user = latestUserContent(context);
+  if (!user) return "";
+  if (typeof user.content === "string") return user.content;
+  return (user.content ?? [])
+    .filter((part) => part?.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n");
+}
+
+function latestReferenceImages(context) {
+  const user = latestUserContent(context);
+  if (!user || typeof user.content === "string") return [];
+  return (user.content ?? []).filter((part) => part?.type === "image");
+}
+
+async function saveGeneratedImage(image, modelId) {
+  const directory = join(process.cwd(), ".pi", "generated-images");
+  await mkdir(directory, { recursive: true });
+  const mime = image?.mime_type ?? "image/png";
+  const extension = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+  const filename = `${modelId}-${Date.now()}.${extension}`;
+  const filePath = join(directory, filename);
+  if (image?.b64_json) {
+    await writeFile(filePath, Buffer.from(image.b64_json, "base64"));
+  } else if (image?.url) {
+    const download = await fetch(image.url);
+    if (!download.ok) throw new Error(`Unable to download generated image: HTTP ${download.status}`);
+    await writeFile(filePath, Buffer.from(await download.arrayBuffer()));
+  } else {
+    throw new Error("Image API returned neither url nor b64_json");
+  }
+  return filePath;
+}
+
+function streamImageGeneration(model, context, options) {
+  const stream = createAssistantMessageEventStream();
+  const output = {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "pending",
+    timestamp: Date.now(),
+  };
+
+  (async () => {
+    try {
+      stream.push({ type: "start", partial: output });
+      const prompt = latestTextPrompt(context);
+      if (!prompt) throw new Error("Image generation requires a text prompt");
+      const references = latestReferenceImages(context);
+      const endpoint = references.length
+        ? "https://token.sensenova.cn/v1/images/edits"
+        : "https://token.sensenova.cn/v1/images/generations";
+      const request = references.length
+        ? {
+            model: model.id,
+            images: references.map((image) => ({
+              image_url: `data:${image.mimeType};base64,${image.data}`,
+            })),
+            prompt,
+            n: 1,
+            response_format: "url",
+            output_format: "png",
+          }
+        : {
+            model: model.id,
+            prompt,
+            n: 1,
+            response_format: "url",
+            output_format: "png",
+          };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SENSENOVA_API_KEY ?? ""}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+        signal: options?.signal,
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? `SenseNova image API HTTP ${response.status}`);
+      }
+      const image = payload?.data?.[0];
+      if (!image) throw new Error("Image API returned no image data");
+      const filePath = await saveGeneratedImage(image, model.id);
+      const result = image.url
+        ? `![Generated image](${image.url})\n\nSaved local copy: ${filePath}\n\nImage URL (valid for 24 hours): ${image.url}`
+        : `Generated image saved to: ${filePath}`;
+      output.content.push({ type: "text", text: result });
+      stream.push({ type: "text_start", contentIndex: 0, partial: output });
+      stream.push({ type: "text_delta", contentIndex: 0, delta: result, partial: output });
+      stream.push({ type: "text_end", contentIndex: 0, content: result, partial: output });
+      output.stopReason = "stop";
+      stream.push({ type: "done", reason: "stop", message: output });
+      stream.end();
+    } catch (error) {
+      output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+      output.errorMessage = error instanceof Error ? error.message : String(error);
+      stream.push({ type: "error", reason: output.stopReason, error: output });
+      stream.end();
+    }
+  })();
+  return stream;
+}
+
+function streamSenseNova(model, context, options) {
+  const modalities = model.sensenovaOutputModalities;
+  const imageModel =
+    (Array.isArray(modalities) && modalities.includes("image")) ||
+    /^(sensenova-u1(?:\.5)?(?:-fast|-lite)?)$/.test(model.id);
+  if (imageModel) {
+    return streamImageGeneration(model, context, options);
+  }
+  return openAICompletionsApi().streamSimple(model, context, options);
+}
+
+// ---------------------------------------------------------------------------
 // Extension entry point (synchronous — no network on startup)
 // ---------------------------------------------------------------------------
 
@@ -105,6 +261,7 @@ export default function (pi) {
     // literal placeholder key during startup.
     apiKey: `$${apiKeyEnv}`,
     api: "openai-completions",
+    streamSimple: streamSenseNova,
     models: SENSENOVA_SEED.map((id) => convertModel({ id })),
 
     async refreshModels({ signal, stored, publish, allowNetwork }) {
