@@ -40,10 +40,10 @@ function isReasoningModel(id) {
 }
 
 function convertModel(model) {
-  const id = model.id;
+  const id = typeof model?.id === "string" ? model.id : String(model?.id ?? "");
   const entry = {
     id,
-    name: model.id || id,
+    name: id,
     reasoning: false,
     input: TEXT_ONLY_IDS.has(id) ? ["text"] : ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -96,40 +96,47 @@ async function fetchModels(baseUrl, signal) {
 export default function (pi) {
   const baseUrl = "https://token.sensenova.cn/v1";
   const apiKeyEnv = "SENSENOVA_API_KEY";
-  // If env var is set, use $VAR reference so pi picks it up; otherwise
-  // use a placeholder so the provider still shows in --list-models and
-  // the user gets a clear auth error instead of a silent skip.
-  const apiKeyRef = process.env[apiKeyEnv] ? `$${apiKeyEnv}` : "<missing>";
-  if (!process.env[apiKeyEnv]) {
-    console.error(`[pi-sensenova] SenseNova: ${apiKeyEnv} is not set. Provider will be listed but API calls will fail until the env var is configured.`);
-  }
 
   pi.registerProvider("sensenova", {
     name: "SenseNova",
     baseUrl,
-    apiKey: apiKeyRef,
+    // Keep this as an env reference even when the variable is absent. Pi can
+    // then mark the provider as unconfigured instead of trying to use a
+    // literal placeholder key during startup.
+    apiKey: `$${apiKeyEnv}`,
     api: "openai-completions",
     models: SENSENOVA_SEED.map((id) => convertModel({ id })),
 
-    async refreshModels({ signal, stored, publish }) {
+    async refreshModels({ signal, stored, publish, allowNetwork }) {
+      // `stored` is a catalog entry ({ models: [...] }), not the model array
+      // itself. Returning the entry here makes Pi try to use an object as a
+      // model list when the network is unavailable, which aborts startup.
+      const cachedModels = Array.isArray(stored?.models) ? stored.models : undefined;
+      const seedModels = SENSENOVA_SEED.map((id) => convertModel({ id }));
+
+      // The first refresh phase only restores persisted state. Do not make a
+      // network request until Pi has confirmed that network access is allowed.
+      if (allowNetwork === false || signal.aborted) {
+        return cachedModels?.length ? cachedModels : seedModels;
+      }
+
       let models;
       try {
         models = await fetchModels(baseUrl, signal);
-      } catch (error) {
-        // If we have a cached catalog from a previous refresh, use it
-        if (stored) return stored;
-        // Otherwise keep the seed list (caller still has it)
-        throw error;
+      } catch {
+        // Model discovery is optional. Always leave Pi with a valid array so
+        // an offline/unauthenticated startup cannot terminate the process.
+        return cachedModels?.length ? cachedModels : seedModels;
       }
 
       if (models.length > 0) {
-        // Persist the catalog so it survives restarts & offline starts
-        publish({ persist: { provider: "sensenova", models } });
+        // Persist the catalog so it survives restarts & offline starts.
+        await publish({ persist: { provider: "sensenova", models } });
         return models;
       }
 
-      // No models returned — keep whatever we have
-      return stored ?? undefined;
+      // No models returned — keep the cached catalog or the seed list.
+      return cachedModels?.length ? cachedModels : seedModels;
     },
   });
 }
