@@ -8,8 +8,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Image, Markdown } from "@earendil-works/pi-tui";
+
+// Convert an absolute path to a clickable Markdown link. The TUI renders
+// `[label](url)` as an OSC 8 hyperlink, so the saved file opens in one click.
+function fileLink(p, label = p) {
+  return `[${label}](${pathToFileURL(String(p)).href})`;
+}
 
 // `openAICompletionsApi` lives on the bare `@earendil-works/pi-ai` export in
 // older pi-ai builds but moved to the `@earendil-works/pi-ai/api/openai-completions.lazy`
@@ -229,8 +236,8 @@ function streamImageGeneration(model, context, options) {
       const filePath = saved.filePath;
       appendSenseNovaImage?.({ path: filePath, mimeType: saved.mimeType });
       const result = image.url
-        ? `![Generated image](${image.url})\n\nSaved local copy: ${filePath}\n\nImage URL (valid for 24 hours): ${image.url}`
-        : `Generated image saved to: ${filePath}`;
+        ? `![Generated image](${image.url})\n\nSaved local copy: ${fileLink(filePath)}\n\nImage URL (valid for 24 hours): ${image.url}`
+        : `Generated image saved to: ${fileLink(filePath)}`;
       output.content.push({ type: "text", text: result });
       stream.push({ type: "text_start", contentIndex: 0, partial: output });
       stream.push({ type: "text_delta", contentIndex: 0, delta: result, partial: output });
@@ -269,11 +276,16 @@ export default function (pi) {
   appendSenseNovaImage = (image) => pi.appendEntry("sensenova-generated-image", image);
   pi.registerEntryRenderer("sensenova-generated-image", (entry, _options, theme) => {
     const image = entry.data ?? {};
+    // pi passes an entry-renderer `theme` that lacks `fallbackColor()`, which
+    // `Image.render` calls. Wrap it so inline previews render and never throw.
+    const imageTheme = theme && typeof theme.fallbackColor === "function"
+      ? theme
+      : { fallbackColor: (s) => (theme && theme.fg ? theme.fg("toolOutput", s) : s) };
     try {
       const data = readFileSync(image.path).toString("base64");
-      return new Image(data, image.mimeType || "image/png", theme, { maxWidthCells: 80, maxHeightCells: 30 });
+      return new Image(data, image.mimeType || "image/png", imageTheme, { maxWidthCells: 80, maxHeightCells: 30 });
     } catch {
-      return new Markdown(`Generated image unavailable: ${image.path ?? "unknown path"}`, 1, 0, theme);
+      return new Markdown(`Generated image unavailable: ${fileLink(image.path ?? "unknown path")}`, 1, 0, theme);
     }
   });
 
