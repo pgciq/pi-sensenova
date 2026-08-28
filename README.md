@@ -36,7 +36,7 @@ export SENSENOVA_API_KEY="your-api-key"
 
 - **OpenAI-compatible streaming** — text models stream through pi-ai's `openai-completions` API.
 - **Reasoning / thinking models** — `deepseek-v4-flash`, `deepseek-v4-pro`, and `glm-5.2` expose a thinking-effort level map (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
-- **Image generation** — models matching `sensenova-u1`, `sensenova-u1.5`, `sensenova-u1-fast`, `sensenova-u1.5-fast` (and `sensenova-u1.5-lite`) route to the `/v1/images/generations` endpoint. Generated images are saved under `.pi/generated-images/`.
+- **Image generation** — models matching `sensenova-u1`, `sensenova-u1.5`, `sensenova-u1-fast`, `sensenova-u1.5-fast` (and `sensenova-u1.5-lite`) route to the verified `/v1/images/generations` endpoint. Generated images are saved under `.pi/generated-images/`; supported terminals also receive a TUI `Image` entry, while print/RPC mode reports the saved path.
 - **Image editing** — `sensenova-u1.5-lite` routes to `/v1/images/edits` when the prompt includes reference images.
 - **Dynamic model discovery** — a seed list is available immediately; the full list is fetched from `/v1/models` and cached. Discovered models survive restarts and offline starts.
 
