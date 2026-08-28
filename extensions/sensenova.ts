@@ -274,7 +274,7 @@ export default function (pi) {
   const baseUrl = "https://token.sensenova.cn/v1";
   const apiKeyEnv = "SENSENOVA_API_KEY";
   appendSenseNovaImage = (image) => pi.appendEntry("sensenova-generated-image", image);
-  pi.registerEntryRenderer("sensenova-generated-image", (entry, _options, theme) => {
+  pi.registerEntryRenderer?.("sensenova-generated-image", (entry, _options, theme) => {
     const image = entry.data ?? {};
     // pi passes an entry-renderer `theme` that lacks `fallbackColor()`, which
     // `Image.render` calls. Wrap it so inline previews render and never throw.
