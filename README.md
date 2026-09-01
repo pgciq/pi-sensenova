@@ -70,6 +70,26 @@ Generate an image (text prompt) with an image model:
 pi --model sensenova/sensenova-u1.5-lite "一只戴帽子的猫"
 ```
 
+## Commands
+
+The extension registers the following commands:
+
+| Command | Description |
+|---|---|
+| `/sensenova-models [image\|vision\|audio\|video\|reasoning\|tools]` | List SenseNova models with capabilities, context/output limits; an optional filter narrows the table. |
+| `/sensenova-usage` | Show token/cost usage accumulated in the current Pi process. |
+
+Examples:
+
+```text
+/sensenova-models
+/sensenova-models vision
+/sensenova-models image
+/sensenova-usage
+```
+
+`/sensenova-usage` is based on `message_end` usage reported by completed assistant messages and is therefore local to the current Pi process. SenseNova's OpenAI-compatible API does not expose a uniform account-level billing/usage endpoint through this provider, so this command is not an account invoice.
+
 ## Development
 
 The extension depends on `@earendil-works/pi-ai` (a peer dependency provided by pi at runtime). `createAssistantMessageEventStream` is imported from the bare package, and `openAICompletionsApi` is resolved defensively: newer pi-ai builds expose it only via the `@earendil-works/pi-ai/api/openai-completions.lazy` subpath, while older builds export it from the bare package. The fallback import keeps the extension loading on both layouts. Validate with:
