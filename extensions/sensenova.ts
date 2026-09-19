@@ -156,10 +156,10 @@ const SENSENOVA_SEED = [
 // Dynamic model fetch (shared by startup & refreshModels)
 // ---------------------------------------------------------------------------
 
-async function fetchModels(baseUrl, signal) {
-  const apiKey = process.env["SENSENOVA_API_KEY"];
+async function fetchModels(baseUrl, signal, apiKey) {
+  const key = apiKey ?? process.env["SENSENOVA_API_KEY"];
   const headers = {};
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+  if (key) headers["Authorization"] = `Bearer ${key}`;
 
   const res = await fetch(`${baseUrl}/models`, { headers, redirect: "follow", signal });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -262,7 +262,7 @@ function streamImageGeneration(model, context, options) {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.SENSENOVA_API_KEY ?? ""}`,
+          Authorization: `Bearer ${options?.apiKey ?? process.env.SENSENOVA_API_KEY ?? ""}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(request),
@@ -337,18 +337,28 @@ export default function (pi) {
     });
   }
 
-  pi.registerProvider("sensenova", {
+  const provider = {
+    id: "sensenova",
     name: "SenseNova",
     baseUrl,
-    // Keep this as an env reference even when the variable is absent. Pi can
-    // then mark the provider as unconfigured instead of trying to use a
-    // literal placeholder key during startup.
-    apiKey: `$${apiKeyEnv}`,
-    api: "openai-completions",
+    auth: {
+      apiKey: {
+        name: "SenseNova API Key",
+        async login(interaction) {
+          const key = await interaction.prompt({ type: "secret", message: "SenseNova API Key" });
+          if (!key.trim()) throw new Error("SenseNova API Key cannot be empty");
+          return { type: "api_key", key: key.trim() };
+        },
+        async resolve({ credential, ctx }) {
+          const key = credential?.key ?? await ctx.env(apiKeyEnv);
+          return key ? { auth: { apiKey: key }, source: credential?.key ? "stored API key" : apiKeyEnv } : undefined;
+        },
+      },
+    },
+    getModels: () => discovery.models,
+    stream: streamSenseNova,
     streamSimple: streamSenseNova,
-    models: discovery.models,
-
-    async refreshModels({ signal, stored, publish, allowNetwork }) {
+    async refreshModels({ signal, stored, publish, allowNetwork, credential }) {
       // `stored` is a catalog entry ({ models: [...] }), not the model array
       // itself. Returning the entry here makes Pi try to use an object as a
       // model list when the network is unavailable, which aborts startup.
@@ -365,7 +375,7 @@ export default function (pi) {
 
       let models;
       try {
-        models = await fetchModels(baseUrl, signal);
+        models = await fetchModels(baseUrl, signal, credential?.key);
       } catch {
         // Model discovery is optional. Always leave Pi with a valid array so
         // an offline/unauthenticated startup cannot terminate the process.
@@ -386,8 +396,16 @@ export default function (pi) {
       discovery.models = fallback;
       return fallback;
     },
+  };
+  pi.registerProvider(provider.id, {
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    api: "openai-completions",
+    apiKey: "$SENSENOVA_API_KEY",
+    streamSimple: provider.streamSimple,
+    models: provider.getModels(),
+    refreshModels: provider.refreshModels,
   });
-
   registerModelCommands(pi, discovery);
   installUsageTracker(pi);
   registerUsageCommand(pi);

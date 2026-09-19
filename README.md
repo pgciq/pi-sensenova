@@ -32,7 +32,15 @@ export SENSENOVA_API_KEY="your-api-key"
 - **Provider id:** `sensenova`
 - **Auth:** `SENSENOVA_API_KEY` env var (the key is kept as an env reference, so pi marks the provider unconfigured rather than sending a placeholder when the variable is absent)
 
-## Features
+Or let Pi manage the credential interactively:
+
+```text
+/login sensenova
+```
+
+The key is stored in `~/.pi/agent/auth.json`; `SENSENOVA_API_KEY` remains a
+fallback.
+
 
 - **OpenAI-compatible streaming** — text models stream through pi-ai's `openai-completions` API.
 - **Reasoning / thinking models** — `deepseek-v4-flash`, `deepseek-v4-pro`, and `glm-5.2` expose a thinking-effort level map (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`).

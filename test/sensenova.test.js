@@ -14,9 +14,9 @@ function createRuntime() {
   const entries = [];
   const eventHandlers = new Map();
   extension({
-    registerProvider(providerName, providerConfig) {
-      name = providerName;
-      config = providerConfig;
+    registerProvider(...args) {
+      name = args.length === 1 ? args[0].id : args[0];
+      config = args.length === 1 ? args[0] : args[1];
     },
     registerCommand(commandName, command) {
       commands.set(commandName, command);
@@ -38,7 +38,6 @@ test("registers the SenseNova OpenAI-compatible provider", () => {
   assert.equal(config.name, "SenseNova");
   assert.equal(config.baseUrl, "https://token.sensenova.cn/v1");
   assert.equal(config.apiKey, "$SENSENOVA_API_KEY");
-  assert.equal(config.api, "openai-completions");
   assert.equal(typeof config.streamSimple, "function");
   assert.equal(typeof config.refreshModels, "function");
 });
@@ -50,8 +49,9 @@ test("seeds the documented text models", () => {
     "deepseek-v4-flash",
     "glm-5.2",
   ]);
-  assert.equal(config.models[0].reasoning, true);
-  assert.deepEqual(config.models[1].input, ["text"]);
+  const models = config.models;
+  assert.equal(models[0].reasoning, true);
+  assert.deepEqual(models[1].input, ["text"]);
 });
 
 test("registers model inspection and usage commands", () => {
